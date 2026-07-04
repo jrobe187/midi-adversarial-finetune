@@ -57,13 +57,13 @@ def load_model(args, device):
         print(f"Checkpoint saved to: {ckpt_path}")
 
     # Build ViT-Large model (RETFound_mae architecture)
-    model = models_vit.__dict__["vit_large_patch16"](
+    model = models_vit.__dict__["RETFound_mae"](
         img_size=args.img_size,
         num_classes=0,       # no classification head — we want raw features
         global_pool=False,   # return full sequence so we can grab CLS token
     )
 
-    checkpoint = torch.load(ckpt_path, map_location="cpu")
+    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     state_dict = checkpoint.get("model", checkpoint)
 
     # Strip keys that don't belong in a feature extractor
@@ -100,10 +100,12 @@ def extract(model, image_paths, transform, batch_size, device, output_dir, input
 
         batch = torch.stack(imgs).to(device)
 
-        # forward_features returns [B, seq_len, embed_dim]
-        # CLS token is index 0
-        features = model.forward_features(batch)   # [B, 197, 1024] for ViT-L/16
-        embeddings = features[:, 0, :]             # [B, 1024]
+        features = model.forward_features(batch)
+        # forward_features may return [B, 1024] (already pooled) or [B, seq_len, 1024]
+        if features.dim() == 3:
+            embeddings = features[:, 0, :]   # CLS token
+        else:
+            embeddings = features            # already pooled
 
         for emb, src_path in zip(embeddings, valid_paths):
             # Preserve subdirectory structure relative to input_dir

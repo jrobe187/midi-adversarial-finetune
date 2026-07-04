@@ -32,8 +32,13 @@ def get_args_parser():
     parser = argparse.ArgumentParser(
         "MAE fine-tuning / linear probing for image classification", add_help=False
     )
+
+    parser.add_argument("--csv_path", type=str, required=True)
+    parser.add_argument("--label_col", type=str, required=True)
+    parser.add_argument("--private_label_col", type=str, required=True)
+    parser.add_argument("--filename_col", type=str, default="filename")
+
     parser.add_argument("--data_path", default="./data/", type=str)
-    parser.add_argument("--csv", default="", type=str, help="Single CSV for all splits")
     parser.add_argument("--train_ratio", default=0.8, type=float)
     parser.add_argument("--val_ratio",   default=0.0, type=float)
     parser.add_argument("--test_ratio",  default=0.2, type=float)
@@ -42,9 +47,9 @@ def get_args_parser():
     parser.add_argument("--epochs", default=50, type=int)
     parser.add_argument("--accum_iter", default=1, type=int)
     # ---- Model parameters
-    parser.add_argument("--model", default="vit_large_patch16", type=str, metavar="MODEL")
+    parser.add_argument("--model", default="RETFound_mae", type=str, metavar="MODEL")
     parser.add_argument("--model_arch", default="dinov3_vits16", type=str, metavar="MODEL_ARCH")
-    parser.add_argument("--input_size", default=256, type=int)
+    parser.add_argument("--input_size", default=224, type=int)
     parser.add_argument("--drop_path", type=float, default=0.2, metavar="PCT")
     parser.add_argument("--global_pool", action="store_true"); parser.set_defaults(global_pool=True)
     parser.add_argument("--cls_token", action="store_false", dest="global_pool")
@@ -91,7 +96,7 @@ def get_args_parser():
     parser.add_argument("--stratified", action="store_true")
     # ---- Runtime
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--seed", default=0, type=int)
+    parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--resume", default="")
     parser.add_argument("--start_epoch", default=0, type=int, metavar="N")
     parser.add_argument("--eval", action="store_true")
@@ -108,6 +113,11 @@ def get_args_parser():
     parser.add_argument("--norm", default="IMAGENET", type=str)
     parser.add_argument("--enhance", action="store_true", default=False)
     parser.add_argument("--datasets_seed", default=2026, type=int)
+    parser.add_argument("--save_prefix", type=str, default="",
+                        help="Prefix prepended to saved checkpoint filenames")
+
+    parser.add_argument("--hidden1", type=int, help="hidden layer 1 neurons")
+    parser.add_argument("--hidden2", type=int, help="hidden layer 2 neurons")
     return parser
 
 
@@ -291,9 +301,11 @@ def main(args, criterion):
     # ---- Build classifier and adversary classifier
     classifier = nn.Linear(1024, args.nb_classes).to(device)
     adversary_classifier = nn.Sequential(
-        nn.Linear(1024, 256),
+        nn.Linear(1024, args.hidden1),
         nn.ReLU(),
-        nn.Linear(256, args.nb_private_classes)
+        nn.Linear(args.hidden1, args.hidden2),
+        nn.ReLU(),
+        nn.Linear(args.hidden2, args.nb_private_classes)
     ).to(device)
 
     # ---- Load pretrained classifier and adversary weights
@@ -380,14 +392,15 @@ def main(args, criterion):
             max_score = val_score
             best_epoch = epoch
             if args.output_dir and args.savemodel:
-                misc.save_model(
-                    args=args, model=model, model_without_ddp=model_without_ddp,
-                    optimizer=optimizer_enc, loss_scaler=loss_scaler, epoch=epoch, mode="best"
+                prefix = f"{args.save_prefix}_" if args.save_prefix else ""
+                torch.save(
+                    {"model": model_without_ddp.state_dict(), "epoch": epoch, "args": args},
+                    os.path.join("checkpoints", "encoder", f"{prefix}_encoder-best.pth"),
                 )
                 torch.save(classifier.state_dict(),
-                           os.path.join(args.output_dir, args.task, "classifier-best.pth"))
+                           os.path.join("checkpoints", "linear", f"{prefix}_classifier-best.pth"))
                 torch.save(adversary_classifier.state_dict(),
-                           os.path.join(args.output_dir, args.task, "adversary-best.pth"))
+                           os.path.join("checkpoints", "mlp", f"{prefix}_adversary-best.pth"))
 
         print(f"Best epoch = {best_epoch}, Best score = {max_score:.4f}")
 
@@ -406,8 +419,9 @@ def main(args, criterion):
     # =========================
     # Final Test (Best Ckpt)
     # =========================
-    ckpt_path = os.path.join(args.output_dir, args.task, "checkpoint-best.pth")
-    checkpoint = torch.load(ckpt_path, map_location="cpu")
+    prefix = f"{args.save_prefix}_" if args.save_prefix else ""
+    ckpt_path = os.path.join("checkpoints", "encoder", f"{prefix}_encoder-best.pth")
+    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     model_without_ddp.load_state_dict(checkpoint["model"], strict=False)
     model.to(device)
     print(f"Test with the best model, epoch = {checkpoint.get('epoch', -1)}:")
