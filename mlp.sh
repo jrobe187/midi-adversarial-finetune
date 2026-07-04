@@ -1,13 +1,10 @@
 #!/bin/bash
 
-DATASET="odir_preprocessed"
-CSV_PATH="../attribute_inference_csv/clean_odir_labels_for_classification.csv"
+DATASET="grape_cfp"
+CSV_PATH="attribute_inference_csv/grape_multiclass_labels.csv"
 EMBEDDING_DIR="/home/jrobe187/midi/embeddings/${DATASET}"
 LINEAR_NB_CLASSES=2
 
-python extract_features.py \
-    --input_dir "/home/jrobe187/midi/preprocessed_datasets/${DATASET}" \
-    --output_dir "$EMBEDDING_DIR"
 
 for label in age_range gender_numeric; do
 
